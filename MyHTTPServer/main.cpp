@@ -4,13 +4,16 @@
 #include <cstring>
 #include <string>
 #include <unistd.h>
+#include <sys/epoll.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #include "util.h"
 
 int main()
 {
 	static constexpr ushort PORT = 8080;
-	static constexpr int MAX_CONNECTS = 10;
+	static constexpr int MAX_EVENTS = 10;
 	static constexpr int MAX_BUFFER_SIZE = 0x0400;
 
 	int server_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -25,46 +28,80 @@ int main()
 	error_if(bind(server_socket, (sockaddr*)&server_sockaddr_in, sizeof(server_sockaddr_in)) == -1,
 		"socket bind failed!");
 
-	error_if(listen(server_socket, MAX_CONNECTS) < 0, "socket listen failed!");
+	error_if(listen(server_socket, MAX_EVENTS) < 0, "socket listen failed!");
 
-	int client_socket = -1;
-	sockaddr_in client_sockaddr_in;
-	auto client_sockaddr_in_len = sizeof(client_sockaddr_in);
+	int epoll_fd = epoll_create1(0); //使用epoll_create1， 使用epoll_create需要保证size > 0
+	error_if(epoll_fd == -1, "epoll create failed!");
+
+	epoll_event events[MAX_EVENTS], event;
+	memset(&events, 0, sizeof(events));
+
+	auto make_event = [](int fd, epoll_event & event) {
+		memset(&event, 0, sizeof(event));
+		event.data.fd = fd;
+		event.events = EPOLLIN | EPOLLET;
+		fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+	};
+
+	make_event(server_socket, event);
+
+	epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_socket, &event);
 
 	std::cout << "server start success, socket : " << server_socket << " port : " << 
 		ntohs(server_sockaddr_in.sin_port) << std::endl;
 
 	while (true) {
-		memset(&client_sockaddr_in, 0, sizeof(client_sockaddr_in));
-		socklen_t client_sockaddr_in_len = sizeof(client_sockaddr_in);
+		int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+		error_if(nfds == -1, "epoll waiting failed!");
 
-		client_socket = accept(server_socket, (sockaddr*)&client_sockaddr_in, &client_sockaddr_in_len);
+		for (int i = 0; i < nfds; i++) {
+			if (events[i].data.fd == server_socket) {
+				int client_socket = -1;
+				sockaddr_in client_sockaddr_in;
+				memset(&client_sockaddr_in, 0, sizeof(client_sockaddr_in));
+				socklen_t client_sockaddr_in_len = sizeof(client_sockaddr_in);
 
-		char client_ip[INET_ADDRSTRLEN];
-		inet_ntop(AF_INET, &client_sockaddr_in.sin_addr, client_ip, INET_ADDRSTRLEN);
-		std::cout << "new client connect : " << client_socket << " ip: " << client_ip
-			<< " port : " << ntohs(client_sockaddr_in.sin_port);
-		if (client_socket == -1) {
-			std::cerr << "client socket error!" << std::endl;
-			continue;
+				client_socket = accept(server_socket, (sockaddr*)&client_sockaddr_in, &client_sockaddr_in_len);
+
+				char client_ip[INET_ADDRSTRLEN];
+				inet_ntop(AF_INET, &client_sockaddr_in.sin_addr, client_ip, INET_ADDRSTRLEN);
+				std::cout << "new client connect : " << client_socket << " ip: " << client_ip
+					<< " port : " << ntohs(client_sockaddr_in.sin_port);
+
+				make_event(client_socket, event);
+			}
+			else if (events[i].events & EPOLLIN) {
+				char recv_buffer[MAX_BUFFER_SIZE];
+
+				while (true) {
+					memset(recv_buffer, 0, sizeof(recv_buffer));
+					auto recv_size = recv(events[i].data.fd, recv_buffer, sizeof(recv_buffer), 0);
+
+					if (recv_size > 0) {
+						std::cout << "recive client " << events[i].data.fd << " :" << std::endl;
+						std::cout << recv_size << std::endl;
+						write(events[i].data.fd, recv_buffer, sizeof(recv_buffer));
+					}
+					else if (recv_size == -1 && errno == EINTR) { //客户端正常中断
+						std::cout << "continue rerading" << std::endl;
+						continue;
+					}
+					else if (recv_size == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) { //数据读取完毕
+						std::cout << "finish reading, errno: " << errno << std::endl;
+						break;
+					}
+					else if (recv_size == 0) { //客户端退出
+						std::cout << "client " << events[i].data.fd << " disconnected" << std::endl;
+						close(events[i].data.fd);
+						break;
+					}
+				}
+			}
+			else {
+				std::cout << "other event" << std::endl;
+			}
 		}
-
-		char recv_buffer[MAX_BUFFER_SIZE];
-
-		recv(client_socket, &recv_buffer, MAX_BUFFER_SIZE, 0);
-
-		std::cout << "recive" << " " << client_socket << " message:" << std::endl;
-		std::cout << recv_buffer << std::endl;
-
-		if (recv_buffer[0] != '0') {
-			std::string send_buffer = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, World!";
-			auto send_size = send(client_socket, send_buffer.c_str(), send_buffer.size(), 0);
-
-			std::cout << "send to" << " " << client_socket << " message:" << std::endl;
-			std::cout << "send size = " << send_size << std::endl;
-			std::cout << send_buffer.substr(0, send_size);
-		}
-
-		close(client_socket);
+		close(server_socket);
+		return EXIT_SUCCESS;
 	};
 }
