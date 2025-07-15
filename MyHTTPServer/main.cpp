@@ -34,18 +34,20 @@ int main()
 	int epoll_fd = epoll_create1(0); //使用epoll_create1， 使用epoll_create需要保证size > 0
 	error_if(epoll_fd == -1, "epoll create failed!");
 
-	epoll_event events[MAX_EVENTS], event;
-	memset(&events, 0, sizeof(events));
+	epoll_event events[MAX_EVENTS];
 
-	auto make_event = [&](int fd, epoll_event & event) {
+	auto make_event = [&](int fd) {
+		epoll_event event;
 		memset(&event, 0, sizeof(event));
 		event.data.fd = fd;
 		event.events = EPOLLIN | EPOLLET;
-		fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-		epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &event);
+		error_if(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == -1,
+			"Failed to set socket to non-blocking state");
+		error_if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &event) == -1,
+			"add epoll event failed");
 	};
 
-	make_event(server_socket, event);
+	make_event(server_socket);
 
 	std::cout << "server start success, socket : " << server_socket << " port : " << 
 		ntohs(server_sockaddr_in.sin_port) << std::endl;
@@ -62,15 +64,23 @@ int main()
 					memset(&client_sockaddr_in, 0, sizeof(client_sockaddr_in));
 					socklen_t client_sockaddr_in_len = sizeof(client_sockaddr_in);
 
-					if (client_socket = accept(server_socket, (sockaddr*)&client_sockaddr_in, &client_sockaddr_in_len); client_socket < 0)
-						break;
+					client_socket = accept(server_socket, (sockaddr*)&client_sockaddr_in, &client_sockaddr_in_len);
+					if (client_socket < 0) {
+						if (errno == EAGAIN || errno == EWOULDBLOCK)
+							break;
+						else {
+							std::cerr << "accept error occur, statu is " << errno << std::endl;
+							break;
+						}
+					}
 
 					char client_ip[INET_ADDRSTRLEN];
-					inet_ntop(AF_INET, &client_sockaddr_in.sin_addr, client_ip, INET_ADDRSTRLEN);
+					if (inet_ntop(AF_INET, &client_sockaddr_in.sin_addr, client_ip, INET_ADDRSTRLEN) == nullptr)
+						strcpy(client_ip, "N/A");
 					std::cout << "new client connect : " << client_socket << " ip: " << client_ip
 						<< " port : " << ntohs(client_sockaddr_in.sin_port) << std::endl;
 
-				make_event(client_socket, event);
+				make_event(client_socket);
 				}
 			}
 			else if (events[i].events & EPOLLIN) {
@@ -82,10 +92,10 @@ int main()
 
 					if (recv_size > 0) {
 						std::cout << "recive client " << events[i].data.fd << " :" << std::endl;
-						std::cout << recv_size << std::endl;
+						std::cout << recv_buffer << std::endl;
 						write(events[i].data.fd, recv_buffer, recv_size);
 					}
-					else if (recv_size == -1 && errno == EINTR) { //客户端正常中断
+					else if (recv_size == -1 && errno == EINTR) { //客户端中断,继续读取
 						std::cout << "continue rerading" << std::endl;
 						continue;
 					}
@@ -95,6 +105,7 @@ int main()
 					}
 					else if (recv_size == 0) { //客户端退出
 						std::cout << "client " << events[i].data.fd << " disconnected" << std::endl;
+						epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL);
 						close(events[i].data.fd);
 						break;
 					}
