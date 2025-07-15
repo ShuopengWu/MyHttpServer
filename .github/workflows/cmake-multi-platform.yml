@@ -1,0 +1,62 @@
+# This starter workflow is for a CMake project running on multiple platforms. There is a different starter workflow if you just want a single platform.
+# See: https://github.com/actions/starter-workflows/blob/main/ci/cmake-single-platform.yml
+name: CMake on Linux only
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # 直接指定在 Ubuntu (Linux) 环境上运行
+
+    strategy:
+      fail-fast: false # 即使某个配置失败，也继续运行其他配置
+
+      # 设置矩阵，只在 Linux 上运行以下两种配置:
+      # 1. <Linux, Release, latest GCC compiler toolchain>
+      # 2. <Linux, Release, latest Clang compiler toolchain>
+      matrix:
+        # 移除了 windows-latest，只保留 ubuntu-latest
+        os: [ubuntu-latest]
+        build_type: [Release]
+        # 只保留 Linux 上的 C 编译器选项
+        c_compiler: [gcc, clang]
+        include:
+          # 只保留 Linux 上的编译器组合
+          - os: ubuntu-latest
+            c_compiler: gcc
+            cpp_compiler: g++
+          - os: ubuntu-latest
+            c_compiler: clang
+            cpp_compiler: clang++
+        # 移除了所有 Windows 相关的排除项，因为 os 矩阵中已经没有 Windows 了
+        # exclude:
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set reusable strings
+      id: strings
+      shell: bash
+      run: |
+        echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+    - name: Configure CMake
+      run: >
+        cmake -B ${{ steps.strings.outputs.build-output-dir }}
+        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -S ${{ github.workspace }}
+
+    - name: Build
+      # 在 Linux 上，默认生成器（Makefiles）是单配置的，所以 --config 参数通常不是必需的，但保留它也无害。
+      run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+
+    - name: Test
+      working-directory: ${{ steps.strings.outputs.build-output-dir }}
+      # 在 Linux 上，默认生成器（Makefiles）是单配置的，所以 --build-config 参数通常不是必需的，但保留它也无害。
+      run: ctest --build-config ${{ matrix.build_type }}
