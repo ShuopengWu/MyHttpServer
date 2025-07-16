@@ -3,7 +3,7 @@
 #
 
 # 将源代码添加到此项目的可执行文件。
-add_executable (MyHTTPServer "main.cpp" "util.h" "util.cpp")
+add_executable (MyHTTPServer "main.cpp" "util.h" "util.cpp" "Epoll.h" "Epoll.cpp" "InetAddress.h" "InetAddress.cpp" "Socket.h" "Socket.cpp")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET MyHTTPServer PROPERTY CXX_STANDARD 20)
