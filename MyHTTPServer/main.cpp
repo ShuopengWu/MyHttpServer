@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <memory>
 
-void handle_read_event(Epoll *epoll, int client_socket_fd)
+void handle_read_event(int client_socket_fd)
 {
 	static constexpr int MAX_READ_BUFFER_SZIE = 0x0400;
 	char buffer[MAX_READ_BUFFER_SZIE];
@@ -32,7 +32,6 @@ void handle_read_event(Epoll *epoll, int client_socket_fd)
 		}
 		else if (read_size == 0) { //客户端退出
 			std::cout << "client " << client_socket_fd << " disconnection!" << std::endl;
-			epoll->delete_event(client_socket_fd);
 			close(client_socket_fd);
 			break;
 		}
@@ -41,21 +40,22 @@ void handle_read_event(Epoll *epoll, int client_socket_fd)
 
 int main()
 {
-	std::unique_ptr<Socket> server_socket = std::make_unique<Socket>();
-	std::unique_ptr<InetAddress> server_address = std::make_unique<InetAddress>();
-	std::unique_ptr<Epoll> epoll = std::make_unique<Epoll>();
+	std::shared_ptr<Socket> server_socket = std::make_unique<Socket>();
+	std::shared_ptr<InetAddress> server_address = std::make_unique<InetAddress>();
+	std::shared_ptr<Epoll> epoll = std::make_unique<Epoll>();
 
 	server_socket->bind_socket(*server_address);
 	server_socket->listen_socket();
 	std::cout << "server start..." << std::endl;
 	server_socket->set_socket_non_blocking();
 
-	epoll->add_event(server_socket->get_socket_fd(), EPOLLIN | EPOLLET);
+	std::unique_ptr<Channel> server_channel = std::make_unique<Channel>(epoll.get(), server_socket->get_socket_fd());
+	server_channel->enable_reading();
 
 	while (true) {
-		std::vector<epoll_event> events = epoll->poll();
-		for (auto event : events) {
-			if (event.data.fd == server_socket->get_socket_fd()) {
+		std::vector<Channel *> channels = epoll->poll();
+		for (auto channel : channels) {
+			if (channel->get_fd() == server_socket->get_socket_fd()) {
 				while(true) {
 					InetAddress client_address;
 					int client_socket_fd = server_socket->accept_client_socket(client_address);
@@ -68,14 +68,15 @@ int main()
 							break;
 						}
 					}
-
 					// TBD : Socket::set_socket_non_blocking static化?
-					error_if(fcntl(client_socket_fd, F_SETFL, fcntl(client_socket_fd, F_GETFL) | O_NONBLOCK) == -1, "failed to set socket to non-blocking state");
-					epoll->add_event(client_socket_fd, EPOLLIN | EPOLLET);
+					auto result = fcntl(client_socket_fd, F_SETFL, fcntl(client_socket_fd, F_GETFL) | O_NONBLOCK);
+					error_if(result == -1, "set socket non block failed!");
+					Channel *client_channel = new Channel(epoll.get(), client_socket_fd);
+					client_channel->enable_reading();
 				}
 			}
-			else if (event.events & EPOLLIN) {
-				handle_read_event(epoll.get(), event.data.fd);
+			else if (channel->get_revents() & EPOLLIN) {
+				handle_read_event(channel->get_fd());
 			}
 			else {
 				std::cout << "other events will be implemented in subsequent versions";

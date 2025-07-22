@@ -15,10 +15,10 @@ public:
     Socket(int socket_fd);
     ~Socket();
     int get_socket_fd() const;
-    void bind_socket(const InetAddress &server_addr);
+    void bind_socket(const InetAddress &server_addr) const;
     void listen_socket(int backlog = DEFAULT_BACKLOG);
-    void set_socket_non_blocking();
-    int accept_client_socket(InetAddress &client_addr);
+    void set_socket_non_blocking() const;
+    int accept_client_socket(InetAddress &client_addr) const;
 private:
     int socket_fd_;
 };
