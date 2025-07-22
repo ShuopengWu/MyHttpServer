@@ -13,7 +13,7 @@ Epoll::~Epoll()
 {
     if (epoll_fd_ != -1)
         close(epoll_fd_);
-    delete[]events;
+    delete []events;
 }
 
 std::vector<Channel *> Epoll::poll(int timeout)
