@@ -1,5 +1,6 @@
 #include "Epoll.h"
 #include "util.h"
+#include "Channel.h"
 
 Epoll::Epoll()
 {
@@ -32,7 +33,7 @@ std::vector<Channel *> Epoll::poll(int timeout)
 }
 
 //bug : 目前无法接受相同ip第二次连接
-void Epoll::update_channel(Channel* channel)
+void Epoll::update_channel(Channel* channel) const
 {
     int fd = channel->get_fd();
     epoll_event ev;

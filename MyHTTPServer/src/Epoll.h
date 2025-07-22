@@ -7,8 +7,6 @@
 #include <vector>
 #include <cstring>
 
-#include "Channel.h"
-
 class Channel;
 
 class Epoll {
@@ -17,7 +15,7 @@ public:
     Epoll();
     ~Epoll();
     std::vector<Channel *> poll(int timeout = -1);
-    void update_channel(Channel* channel);
+    void update_channel(Channel* channel) const;
 private:
     int epoll_fd_;
     epoll_event *events;
