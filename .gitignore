@@ -45,3 +45,6 @@ out/
 
 # vs
 .vs/
+
+# cmake
+cmake/
